@@ -1,0 +1,19 @@
+# Core LangChain / LangGraph
+langchain>=1.3.0
+langgraph>=1.2.0
+langchain-core>=1.2.0
+langchain-ollama>=1.1.0
+
+# Web Server
+fastapi>=0.139.0
+uvicorn[standard]>=0.50.0
+
+# Utilities
+python-dotenv>=1.2.0
+httpx>=0.23.0
+pydantic>=2.7.0
+
+# Vector Database and Document Processing
+qdrant-client>=1.9.0
+pypdf>=4.0.0
+langchain-qdrant>=0.1.0
