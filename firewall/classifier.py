@@ -1,5 +1,6 @@
 import os
 import torch
+import zipfile
 from transformers import pipeline
 
 # Resolve model name
@@ -8,16 +9,45 @@ MODEL_NAME = "bennetsharwin/distilbert-prompt-injection-v2"
 # Detect device: use GPU if available, else CPU
 device = 0 if torch.cuda.is_available() else -1
 
-print(f"Loading classifier model '{MODEL_NAME}' into memory on device: {'cuda' if device == 0 else 'cpu'}...")
+clf = None
 
-# Eagerly load the pipeline into memory on startup
-clf = pipeline(
-    "text-classification",
-    model=MODEL_NAME,
-    device=device
-)
-
-print("Classifier model loaded and ready for inference.")
+# Attempt to load the model eagerly from Hugging Face
+try:
+    print(f"Loading classifier model '{MODEL_NAME}' from Hugging Face into memory...")
+    clf = pipeline(
+        "text-classification",
+        model=MODEL_NAME,
+        device=device
+    )
+    print("Classifier model loaded successfully from Hugging Face.")
+except Exception as e:
+    print(f"Failed to load model from Hugging Face ({e}). Attempting local offline fallback...")
+    
+    # Paths for local model and zip file
+    LOCAL_MODEL_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../models/distilbert-prompt-injection-v2"))
+    zip_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../training/distilbert-prompt-injection-v2.zip"))
+    
+    # If the local model directory is missing, try to extract it from the zip
+    if not os.path.isdir(LOCAL_MODEL_PATH):
+        if os.path.isfile(zip_path):
+            print(f"Extracting local model zip '{zip_path}' to '{LOCAL_MODEL_PATH}'...")
+            os.makedirs(LOCAL_MODEL_PATH, exist_ok=True)
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                zip_ref.extractall(LOCAL_MODEL_PATH)
+            print("Extraction complete.")
+        else:
+            raise RuntimeError(f"Hugging Face load failed and local zip file was not found at '{zip_path}'.")
+            
+    if os.path.isdir(LOCAL_MODEL_PATH):
+        print(f"Loading local model from '{LOCAL_MODEL_PATH}'...")
+        clf = pipeline(
+            "text-classification",
+            model=LOCAL_MODEL_PATH,
+            device=device
+        )
+        print("Classifier model loaded successfully from local directory.")
+    else:
+        raise RuntimeError(f"Could not load Hugging Face model and local model directory '{LOCAL_MODEL_PATH}' was invalid.")
 
 def detect_classifier(text: str) -> tuple[bool, str]:
     """

@@ -9,6 +9,7 @@ from pydantic import BaseModel
 # Import detection methods
 from signatures import detect_signatures
 from classifier import detect_classifier
+from redactor import redact_sensitive_info
 
 # Configure logging
 logging.basicConfig(
@@ -81,7 +82,24 @@ async def chat_endpoint(request: ChatRequest):
                 f"{BACKEND_URL}/chat",
                 json=request.model_dump(),
             )
+            
+            if response.status_code == 200:
+                resp_json = response.json()
+                if "response" in resp_json and isinstance(resp_json["response"], str):
+                    redacted_text, redacted_types = redact_sensitive_info(resp_json["response"])
+                    if redacted_types:
+                        logger.warning({
+                            "event": "sensitive_content_redacted",
+                            "redacted_types": redacted_types,
+                            "user_id": user_id,
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                            "action": "redacted"
+                        })
+                        resp_json["response"] = redacted_text
+                return JSONResponse(status_code=response.status_code, content=resp_json)
+                
             return JSONResponse(status_code=response.status_code, content=response.json())
+            
         except httpx.RequestError as exc:
             print(f"[FIREWALL /chat] Error forwarding request: {exc}")
             raise HTTPException(status_code=502, detail=f"Failed to connect to backend server: {exc}")
