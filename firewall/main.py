@@ -28,6 +28,24 @@ BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:8000")
 
 GENERIC_REFUSAL = "I can't help with that request."
 
+def get_signature_category(reason: str) -> str:
+    reason_lower = reason.lower()
+    if "delimiter" in reason_lower:
+        return "delimiter"
+    elif "role-play" in reason_lower or "persona" in reason_lower:
+        return "roleplay"
+    elif "injection" in reason_lower:
+        return "injection"
+    elif "base64" in reason_lower:
+        if "delimiter" in reason_lower:
+            return "base64_delimiter"
+        elif "role-play" in reason_lower or "persona" in reason_lower:
+            return "base64_roleplay"
+        elif "injection" in reason_lower:
+            return "base64_injection"
+        return "base64"
+    return "signature"
+
 class ChatRequest(BaseModel):
     message: str
     history: list[dict] = []
@@ -43,13 +61,12 @@ async def chat_endpoint(request: ChatRequest):
     is_blocked, signature_reason = detect_signatures(request.message)
     if is_blocked:
         logger.warning({
-            "event": "prompt_injection_detected",
+            "action": "blocked",
             "layer": "signature",
+            "detection_type": get_signature_category(signature_reason),
             "matched_pattern": signature_reason,
             "user_id": user_id,
-            "message": request.message,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "action": "blocked"
+            "message": request.message
         })
         return {
             "response": GENERIC_REFUSAL,
@@ -60,19 +77,22 @@ async def chat_endpoint(request: ChatRequest):
     is_blocked, classifier_reason = detect_classifier(request.message)
     if is_blocked:
         logger.warning({
-            "event": "prompt_injection_detected",
+            "action": "blocked",
             "layer": "classifier",
             "matched_pattern": classifier_reason,
             "user_id": user_id,
-            "message": request.message,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "action": "blocked"
+            "message": request.message
         })
         return {
             "response": GENERIC_REFUSAL,
             "model": "firewall"
         }
         
+    logger.info({
+        "action": "allowed",
+        "user_id": user_id,
+        "message": request.message
+    })
     logger.info(f"CLEAN: Forwarding query to backend at {BACKEND_URL}/chat")
     
     # Forward the request to the actual backend
