@@ -1,7 +1,7 @@
 import os
 import torch
 import zipfile
-from transformers import pipeline
+from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification
 
 # Resolve model name
 MODEL_NAME = "bennetsharwin/distilbert-prompt-injection-v2"
@@ -14,9 +14,14 @@ clf = None
 # Attempt to load the model eagerly from Hugging Face
 try:
     print(f"Loading classifier model '{MODEL_NAME}' from Hugging Face into memory...")
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+    if "token_type_ids" in tokenizer.model_input_names:
+        tokenizer.model_input_names.remove("token_type_ids")
+    model = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME)
     clf = pipeline(
         "text-classification",
-        model=MODEL_NAME,
+        model=model,
+        tokenizer=tokenizer,
         device=device
     )
     print("Classifier model loaded successfully from Hugging Face.")
@@ -40,9 +45,14 @@ except Exception as e:
             
     if os.path.isdir(LOCAL_MODEL_PATH):
         print(f"Loading local model from '{LOCAL_MODEL_PATH}'...")
+        tokenizer = AutoTokenizer.from_pretrained(LOCAL_MODEL_PATH)
+        if "token_type_ids" in tokenizer.model_input_names:
+            tokenizer.model_input_names.remove("token_type_ids")
+        model = AutoModelForSequenceClassification.from_pretrained(LOCAL_MODEL_PATH)
         clf = pipeline(
             "text-classification",
-            model=LOCAL_MODEL_PATH,
+            model=model,
+            tokenizer=tokenizer,
             device=device
         )
         print("Classifier model loaded successfully from local directory.")
@@ -63,9 +73,9 @@ def detect_classifier(text: str) -> tuple[bool, str]:
         return False, "empty text"
         
     try:
-        results = clf(text)
+        results = clf(text, truncation=True, max_length=512, padding=True)
         if not results:
-            return False, "no predictions"
+            return True, "error: no predictions"
             
         prediction = results[0]
         label = prediction["label"]
@@ -76,7 +86,7 @@ def detect_classifier(text: str) -> tuple[bool, str]:
         return is_blocked, reason
     except Exception as e:
         print(f"Error during classifier inference: {e}")
-        return False, f"error: {str(e)}"
+        return True, f"classifier_error: {str(e)}"
 
 def detect_classifier_batch(texts: list[str]) -> list[tuple[bool, str]]:
     """
@@ -92,7 +102,7 @@ def detect_classifier_batch(texts: list[str]) -> list[tuple[bool, str]]:
         return []
         
     try:
-        results = clf(texts)
+        results = clf(texts, truncation=True, max_length=512, padding=True)
         batch_results = []
         for res in results:
             label = res["label"]
@@ -103,7 +113,7 @@ def detect_classifier_batch(texts: list[str]) -> list[tuple[bool, str]]:
         return batch_results
     except Exception as e:
         print(f"Error during batch classifier inference: {e}")
-        return [(False, f"error: {str(e)}")] * len(texts)
+        return [(True, f"classifier_error: {str(e)}")] * len(texts)
 
 if __name__ == "__main__":
     # Test single prediction
