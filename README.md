@@ -241,7 +241,7 @@ The script supports interactive post-training options: local zip export and Hugg
 ```
 PIF-LLM-Firewall/
 ├── firewall/                     # 🛡️ Core firewall proxy
-│   ├── main.py                   # FastAPI proxy router — intercepts /chat, /health, /models
+│   ├── main.py                   # FastAPI proxy router — intercepts and scans /chat, forwards to backend
 │   ├── signatures.py             # Regex patterns, de-leet, normalization, Base64 recursion
 │   ├── classifier.py             # DistilBERT inference (HF download + offline fallback)
 │   ├── redactor.py               # Egress PII redaction (email, phone, SSN, cards, keys, IPs)
@@ -277,37 +277,109 @@ PIF-LLM-Firewall/
 
 ---
 
-## 🔧 Standalone Usage (Without the Demo Stack)
+## 🔧 Standalone Usage & Custom Integration
 
-PIF's firewall module can be dropped in front of **any** LLM backend. You don't need the bundled RAG agent:
+PIF is designed to be fully decoupled, making it easy to drop in front of **any** custom chatbot or LLM application. 
 
-```python
-# Point the firewall at your own backend
-BACKEND_URL=https://your-llm-api.com docker-compose up firewall
+By default, the firewall only intercepts and sanitizes prompt-carrying endpoints (like `POST /chat`). All other utility routes (health checks, model selection, history, etc.) should bypass the firewall and connect directly to your chatbot backend.
+
+### Option A: Reverse Proxy Integration (Chained Proxy)
+
+If you use a reverse proxy (e.g., Nginx, Apache, or Cloudflare) in front of your stack, configure it to route only the message endpoints through the firewall, while forwarding utility traffic directly to the backend.
+
+#### Nginx Example
+```nginx
+# 1. Route message traffic through the security firewall
+location /chat {
+    proxy_pass http://firewall:5000/chat;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+}
+
+# 2. Route all other application services directly to your backend
+location /health {
+    proxy_pass http://backend:8000/health;
+}
+
+location /models {
+    proxy_pass http://backend:8000/models;
+}
 ```
 
-Or use the detection functions directly in your own Python code:
+To run this standalone proxy container, simply set the `BACKEND_URL` environment variable to point to your real backend service:
+```bash
+docker run -d -p 5000:5000 \
+  -e BACKEND_URL="http://your-chatbot-backend:8000" \
+  --name pif-firewall \
+  bennetsharwin/pif-firewall:latest
+```
+
+---
+
+### Option B: Microservice API Integration
+
+Instead of routing traffic through the firewall as a network proxy, you can call the firewall programmatically from your chatbot's backend as a microservice before calling your LLM.
+
+#### Python Backend Integration Example
+```python
+import httpx
+
+async def get_chatbot_response(user_message: str, history: list):
+    # 1. Ask the firewall to scan the user prompt
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            fw_response = await client.post(
+                "http://firewall:5000/chat",
+                json={"message": user_message, "history": history}
+            )
+            
+            if fw_response.status_code == 200:
+                result = fw_response.json()
+                # If model is "firewall", the request was blocked
+                if result.get("model") == "firewall":
+                    return result["response"]  # "I can't help with that request."
+        except httpx.RequestError as exc:
+            # Fallback or alert logic if the firewall is down
+            pass
+
+    # 2. If clean, proceed to query your LLM / agent backend
+    return await query_llm(user_message)
+```
+
+---
+
+### Option C: Direct Python Import
+
+If you have a Python-based chatbot backend, you can skip HTTP boundaries altogether and import the security layers directly:
 
 ```python
 from firewall.signatures import detect_signatures
 from firewall.classifier import detect_classifier
 from firewall.redactor import redact_sensitive_info
 
-# Check user input
-is_blocked, reason = detect_signatures(user_message)
-if not is_blocked:
+def secure_chat_flow(user_message: str, raw_llm_callback):
+    # 1. Check user input against signatures
+    is_blocked, reason = detect_signatures(user_message)
+    if is_blocked:
+        return "I can't help with that request."
+
+    # 2. Fall back to ML classifier check
     is_blocked, reason = detect_classifier(user_message)
+    if is_blocked:
+        return "I can't help with that request."
 
-if is_blocked:
-    return generic_refusal()
+    # 3. Call the LLM if input is safe
+    llm_response = raw_llm_callback(user_message)
 
-# Check LLM output for PII leaks
-safe_response, redacted_types = redact_sensitive_info(llm_response)
+    # 4. Scan LLM output for PII leakage (egress check)
+    safe_response, redacted_types = redact_sensitive_info(llm_response)
+    return safe_response
 ```
 
 ---
 
-## 🛣️ Roadmap
+## Roadmap
 
 - [ ] LLM-as-a-Judge detection layer (third detection stage using a local model)
 - [ ] Streaming response support (SSE/WebSocket proxying)
@@ -324,7 +396,7 @@ Contributions are welcome! Whether it's new signature patterns, model improvemen
 
 ```bash
 # Fork & clone
-git clone https://github.com/<your-username>/PIF-LLM-Firewall.git
+git clone https://github.com/bencrypted0/PIF-LLM-Firewall.git
 
 # Run tests
 python test.py
@@ -334,7 +406,7 @@ python test.py
 
 ---
 
-## 📄 License
+## License
 
 This project is licensed under the [MIT License](LICENSE) — use it freely in personal and commercial projects.
 

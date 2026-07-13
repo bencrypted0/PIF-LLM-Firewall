@@ -124,44 +124,6 @@ async def chat_endpoint(request: ChatRequest):
             print(f"[FIREWALL /chat] Error forwarding request: {exc}")
             raise HTTPException(status_code=502, detail=f"Failed to connect to backend server: {exc}")
 
-@app.get("/health")
-async def health_proxy():
-    """Proxy health check to backend."""
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        try:
-            response = await client.get(f"{BACKEND_URL}/health")
-            return JSONResponse(status_code=response.status_code, content=response.json())
-        except Exception as exc:
-            return JSONResponse(
-                status_code=503,
-                content={"status": "firewall_only_ok", "error": f"Backend unreachable: {exc}"}
-            )
-
-@app.get("/models")
-async def models_proxy():
-    """Proxy models list to backend."""
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        try:
-            response = await client.get(f"{BACKEND_URL}/models")
-            return JSONResponse(status_code=response.status_code, content=response.json())
-        except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"Failed to contact backend: {exc}")
-
-class SelectModelRequest(BaseModel):
-    model: str
-
-@app.post("/models/select")
-async def select_model_proxy(request: SelectModelRequest):
-    """Proxy model selection to backend."""
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        try:
-            response = await client.post(
-                f"{BACKEND_URL}/models/select",
-                json=request.model_dump()
-            )
-            return JSONResponse(status_code=response.status_code, content=response.json())
-        except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"Failed to contact backend: {exc}")
 
 if __name__ == "__main__":
     import uvicorn
